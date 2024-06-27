@@ -1,0 +1,24 @@
+Tempurature Manuscript Needs
+ 
+>read temp manuscript
+
+SST daily for all lakes 
+Landsat ARD SST product
+Clouds in lake or scene it decreases temp
+Use in situ temp data to inform model instead
+
+Tested
+L-ARD lake no cloud, scene w cloud
+L-ARD scene wo cloud
+In situ
+
+Big gap in east of data for scenes wo any clouds
+
+Suspicious that there was a download error
+
+Some files got reorganized so pull them back out to run the code
+
+Action <- GEE vs whats been downloaded to see whats missing
+
+Model should output a daily temp forcast and its not doing that
+

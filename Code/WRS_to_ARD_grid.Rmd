@@ -1,0 +1,157 @@
+---
+title: "Temperature_manuscript"
+output: html_document
+date: "2024-06-12"
+---
+
+```{r}
+rm(list=ls()) #clear environment
+
+#Load libraries
+library(dplyr)
+library(sf)
+library(stringr)
+library(ggplot2)
+
+#Set working directory
+wd <- "O:/PRIV/NERL_ORD_CYAN/CroninGolomb_Working/Temperature_manuscript_qaqc/"
+
+Sat <- "L7"
+cloudCover <- "all" #"1percent_cloud_scene" or "all"
+
+#Read in GEE generated WRS tiles
+L_WRS <- read.csv(paste0(wd, "Inputs/GEE_Images/", Sat,"_", cloudCover,"_images.csv"))
+names(L_WRS)[names(L_WRS) == 'system.index'] <- 'GEE_WRS_tile'
+
+#Read in ARD tiles
+ARD_tiles <- read.csv(paste0(wd,"Inputs/ARD_to_WRS_CONUS.csv"))
+ARD_tiles <- ARD_tiles[,c(8,9,5,6)]
+
+#All ARD
+ARD_all1 <- read.csv(paste0(wd,"Inputs/ARD_filenames/LANDSAT_ARD_TILE_C2.csv")) #found at https://www.usgs.gov/landsat-missions/bulk-metadata-service
+```
+
+```{r}
+ARD_all <- ARD_all1[,c(2,7,13,14)]
+ARD_all$DATE <- as.numeric(substr(ARD_all$Entity_ID, 16,23)) #Isolate collection date
+ARD_all$PDATE <- as.numeric(substr(ARD_all$Entity_ID, 25,32)) #Isolate collection date
+ARD_all$Sat <- substr(ARD_all$Entity_ID, 1,4) # Isolate Satellite tag
+ARD_all <- ARD_all[ARD_all$Tile_Grid_Region == "CU", ] # filter only CONUS
+ARD_all <- ARD_all[,c(1,3:7)]
+ARD_all$h <- as.numeric(substr(ARD_all$Entity_ID,9,11))
+ARD_all$v <- as.numeric(substr(ARD_all$Entity_ID,12,14))
+```
+
+#Seperate path and row from Landsat naming convention
+```{r}
+L_WRS$PATH <- as.numeric(substr(L_WRS$GEE_WRS_tile,6,8))
+L_WRS$ROW <- as.numeric(substr(L_WRS$GEE_WRS_tile,9,11))
+L_WRS$DATE <- as.numeric(substr(L_WRS$GEE_WRS_tile,13,20))
+```
+
+#Merge to that each landsat tile is labeled its corresponding ARD tile
+```{r}
+GEE_WRS_ARD <- merge(L_WRS, ARD_tiles, by = c("PATH", "ROW"), all.x = TRUE)
+noDateGEE <- seq(20220431, 20220631, 1)
+GEE_WRS_ARD <- GEE_WRS_ARD[ ! GEE_WRS_ARD$DATE %in% noDateGEE, ]
+GEE_WRS_ARD <- na.omit(GEE_WRS_ARD)
+
+#write.csv(L_WRS_ARD, file = paste0(wd, "Outputs/", Sat, "_ARD_",cloudCover,"_images.csv"), row.names = F)
+```
+
+#Atmos ARD tiles
+```{r}
+Atmos_tiles <- read.csv(paste0(wd,"Inputs/atmos_ARD_list.csv"))
+Atmos_tiles$Sat <- substr(Atmos_tiles$ARD_tile, 1,4)
+names(Atmos_tiles)[names(Atmos_tiles) == 'ARD_tile'] <- 'Atmos_ARD_tile'
+
+if (Sat == "L7"){
+  Sat_ref <- "LE07"
+  Atmos_ARD <- Atmos_tiles[Atmos_tiles$Sat == Sat_ref, ]
+  ARD_all <- ARD_all[ARD_all$Sat == Sat_ref, ]
+  } else if (Sat == "L8"){
+    Sat_ref <- "LC08"
+    Atmos_ARD <- Atmos_tiles[Atmos_tiles$Sat == Sat_ref, ]
+    Atmos_ARD$Atmos_ARD_tile <- substr(Atmos_ARD$Atmos_ARD_tile, 24, nchar(Atmos_ARD$Atmos_ARD_tile) )
+    ARD_all <- ARD_all[ARD_all$Sat == Sat_ref, ]
+    } else if (Sat == "L9"){
+      Sat_ref <- "LC09"
+      Atmos_ARD <- Atmos_tiles[Atmos_tiles$Sat == Sat_ref, ]
+      ARD_all <- ARD_all[ARD_all$Sat == Sat_ref, ]
+      }
+
+Atmos_ARD$h <- as.numeric(substr(Atmos_ARD$Atmos_ARD_tile, 9,11))
+Atmos_ARD$v <- as.numeric(substr(Atmos_ARD$Atmos_ARD_tile, 12,14))
+Atmos_ARD$DATE <- as.numeric(substr(Atmos_ARD$Atmos_ARD_tile, 16,23))
+Atmos_ARD$PDATE <- as.numeric(substr(Atmos_ARD$Atmos_ARD_tile, 25,32))
+Atmos_ARD <- Atmos_ARD[- grep("B", Atmos_ARD$Atmos_ARD_tile),]
+
+#remove Atmos outside start range
+noDateAtmos <- seq(20160101, 20160500, 1)
+Atmos_ARD <- Atmos_ARD[ ! Atmos_ARD$DATE %in% noDateAtmos, ]
+
+noDateARD <- seq(20160500, 20220431, 1)
+ARD_all <- ARD_all[ ARD_all$DATE %in% noDateARD, ]
+
+write.csv(ARD_all, file = paste0(wd, "Inputs/ARD_filenames/", Sat, "_ARD_all.csv"), row.names = F)
+
+#rm(Atmos_tiles, L_WRS, ARD_tiles)
+```
+
+#Merge Atmos ARD with GEE WRS
+```{r}
+#Merge Landsat scenes and Atmos ARD tiles
+Atmos_GEE <- merge(GEE_WRS_ARD, Atmos_ARD, by = c("h", "v", "DATE"), all = T)
+Atmos_GEE <- Atmos_GEE[,c(6,9,3,1,2,4,5)]
+
+#Separate out the tiles/scenes that don't have a match
+Merge_noGEE <- Atmos_GEE[is.na(Atmos_GEE$GEE_WRS_tile),] #DF with files that have only Atmos, and no associated Landsat
+Merge_noAtmos <- Atmos_GEE[is.na(Atmos_GEE$Atmos_ARD_tile),] #DF with files that have only Landsat, and no associated Atmos, which is the one we care about
+Merge_noAll <- as.data.frame(rbind(Merge_noGEE, Merge_noAtmos)) #DF that combines the above two DFs
+Merge_match <- Atmos_GEE[-c(as.numeric(row.names(Merge_noAll))),] #DF with files that have both ARD and Landsat
+
+#Merge files that have only Landsat scenes available with the list of all of the available ARD tiles, to figure out which ARD tiles didn't download. 
+Merge_noMatch <- merge(Merge_noAtmos, ARD_all, by = c("DATE", "h", "v"))
+
+#Also merge the files that have matching Atmos and Landsat scenes/tiles with the list of all available ARD tiles
+Merge_yesMatch <- merge(Merge_match, ARD_all, by = c("DATE", "h", "v"), all = F)
+
+#Export the list of files that have only Landsat, and no associated Atmos
+Merge_noAtmos$h <- formatC(Merge_noAtmos$h, width = 3, format = "d", flag = "0")
+Merge_noAtmos$v <- formatC(Merge_noAtmos$v, width = 3, format = "d", flag = "0")
+
+write.csv(Merge_noAtmos, file = paste0(wd, "Outputs/Tables/", Sat, "_",cloudCover,"_noAtmos.csv"), row.names = F)
+```
+
+#Count of no Atmos match
+```{r}
+#Read in CONUS and ARD tile shapefiles
+ARD_shp <- read_sf(paste0(wd, "Inputs/Shapefile_Grids/CONUS_ARD_only.shp"))
+CONUS_shp <- read_sf(paste0(wd, "Inputs/Shapefile_Grids/CONUS/CONUS.shp"))
+
+#Calculate counts of no Atmos match up
+Merge_noAtmos$hv <- paste0(Merge_noAtmos$h, "_", Merge_noAtmos$v)
+Sum_merge_noAtmos <- Merge_noAtmos %>% 
+  group_by(hv) %>% 
+  summarise(n = n())
+
+Sum_merge_noAtmos[c('h', 'v')] <- str_split_fixed(Sum_merge_noAtmos$hv, '_', 2)
+
+#Merge with ARD shapefile
+Merge_ARD <- merge(ARD_shp, Sum_merge_noAtmos, by.y = c("h", "v"), all.y = T)
+
+#Map count of no Atmos match
+gg_ARD <- ggplot() +
+  geom_sf(data = CONUS_shp) +
+  geom_sf(data = Merge_ARD, aes(fill = n)) +
+  ggtitle(paste0("Missing Atmos Tiles compared to GEE Image Collection for ",Sat)) +
+  scale_fill_continuous(type = "viridis", limits = c(0,150), breaks = seq(0,150,50)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+gg_ARD
+
+#Export csv and map of ARD counts
+write_sf(Merge_ARD, paste0(wd, "Outputs/Shapefiles/", Sat, "_",cloudCover,"_noAtmos.shp"))
+
+ggsave(filename=paste0(Sat,"_",cloudCover,"_noAtmos.png"), plot = gg_ARD, device = "png", path = paste0(wd, "Outputs/Figures"), width = 6, height = 5, dpi = 300, units = "in")
+```
